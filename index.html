@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16302a">
+<title>Chalk Sprint</title>
+<meta name="description" content="A fast chalkboard math game: pick the right answer before the chalk runs out.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cabin+Sketch:wght@400;700&family=Baloo+2:wght@500;700;800&display=swap">
+<style>
+/* Layout: one-screen chalkboard. HUD strip on top, the three-block equation in the middle, a 2x2 answer grid below. */
+:root {
+  --slate: #1f3a33;
+  --slate-deep: #16302a;
+  --chalk: #f2efe4;
+  --chalk-dim: #b9c4bc;
+  --good: #5fe08a;
+  --bad: #ff5d5d;
+  --gold: #ffd166;
+  --wood: #8a5a34;
+  --display: "Cabin Sketch", "Comic Sans MS", "Chalkboard SE", cursive;
+  --body: "Baloo 2", "Trebuchet MS", system-ui, sans-serif;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--slate-deep); color: var(--chalk);
+  font-family: var(--body); overflow: hidden; touch-action: manipulation;
+  user-select: none; -webkit-user-select: none;
+}
+#frame {
+  height: 100%; padding: 12px 16px; display: flex; justify-content: center;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.06), transparent 60%),
+    var(--slate-deep);
+}
+#board {
+  position: relative; width: 100%; max-width: 640px; height: 100%;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 16px; border-radius: 14px;
+  background:
+    radial-gradient(60% 40% at 30% 20%, rgba(255,255,255,.05), transparent 70%),
+    radial-gradient(50% 50% at 80% 80%, rgba(255,255,255,.04), transparent 70%),
+    var(--slate);
+  border: 10px solid var(--wood);
+  box-shadow: inset 0 0 40px rgba(0,0,0,.45), 0 10px 30px rgba(0,0,0,.5);
+  will-change: transform;
+}
+#board.shake { animation: shake .38s cubic-bezier(.36,.07,.19,.97); }
+@keyframes shake {
+  10%,90% { transform: translate3d(-2px,1px,0) rotate(-.3deg); }
+  20%,80% { transform: translate3d(5px,-2px,0) rotate(.5deg); }
+  30%,50%,70% { transform: translate3d(-9px,2px,0) rotate(-.8deg); }
+  40%,60% { transform: translate3d(9px,-1px,0) rotate(.8deg); }
+}
+
+/* HUD */
+#hud { display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
+.stat { display: flex; flex-direction: column; line-height: 1; }
+.stat small { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--chalk-dim); }
+.stat b { font-family: var(--display); font-size: 30px; font-weight: 700; }
+#score.bump { animation: bump .25s ease-out; }
+@keyframes bump { 40% { transform: scale(1.25); color: var(--gold); } }
+#combo { color: var(--gold); }
+#combo.hot { animation: pulse .5s ease-in-out infinite alternate; }
+@keyframes pulse { to { transform: scale(1.12); text-shadow: 0 0 12px rgba(255,209,102,.7); } }
+#lives { margin-left: auto; display: flex; gap: 4px; font-size: 22px; }
+#lives span { transition: transform .3s, opacity .3s; color: var(--bad); }
+#lives span.lost { opacity: .18; transform: scale(.6) rotate(-20deg); color: var(--chalk-dim); }
+.iconbtn {
+  width: 44px; height: 44px; border-radius: 10px; border: 2px solid rgba(242,239,228,.35);
+  background: transparent; color: var(--chalk); font: 700 18px var(--body); cursor: pointer;
+  display: grid; place-items: center;
+}
+.iconbtn:hover { border-color: var(--chalk); }
+.iconbtn:focus-visible, .ans:focus-visible, .cta:focus-visible, input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+/* Timer */
+#timer { height: 10px; border-radius: 6px; background: rgba(0,0,0,.25); overflow: hidden; }
+#timerFill { height: 100%; width: 100%; background: var(--chalk); transform-origin: left center; border-radius: 6px; }
+#timerFill.low { background: var(--bad); }
+
+/* Equation */
+#eqWrap { flex: 1; display: grid; place-items: center; min-height: 0; position: relative; }
+#level { position: absolute; top: 0; left: 0; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--chalk-dim); }
+#eq { display: flex; align-items: center; gap: clamp(6px, 2vw, 14px); font-family: var(--display); font-weight: 700; }
+#eq.enter { animation: enter .28s cubic-bezier(.2,1.4,.4,1); }
+@keyframes enter { from { transform: translateY(14px) scale(.9); opacity: 0; } }
+.blk {
+  min-width: clamp(64px, 20vw, 120px); height: clamp(72px, 22vw, 120px); padding: 0 10px;
+  display: grid; place-items: center; font-size: clamp(38px, 11vw, 66px);
+  border: 3px solid rgba(242,239,228,.7); border-radius: 12px 16px 10px 14px;
+  font-variant-numeric: tabular-nums;
+}
+.blk.blank { border-style: dashed; color: var(--chalk-dim); transition: background .15s, border-color .15s, color .15s; }
+.blk.blank.ok { background: rgba(95,224,138,.18); border: 3px solid var(--good); color: var(--good); animation: pop .3s ease-out; }
+.blk.blank.no { background: rgba(255,93,93,.15); border: 3px solid var(--bad); color: var(--bad); }
+@keyframes pop { 50% { transform: scale(1.18) rotate(-3deg); } }
+.op { font-size: clamp(34px, 9vw, 56px); color: var(--chalk-dim); }
+
+#float { position: absolute; pointer-events: none; font-family: var(--display); font-weight: 700; font-size: 34px; color: var(--good); opacity: 0; }
+#float.go { animation: floatUp .8s ease-out; }
+#float.bad { color: var(--bad); }
+@keyframes floatUp { 0% { opacity: 1; transform: translateY(0) scale(.8); } 30% { transform: translateY(-14px) scale(1.15); } 100% { opacity: 0; transform: translateY(-60px) scale(1); } }
+
+/* Answers */
+#answers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ans {
+  position: relative; height: clamp(68px, 15vh, 96px); border-radius: 14px; cursor: pointer;
+  border: 3px solid rgba(242,239,228,.55); background: rgba(255,255,255,.04); color: var(--chalk);
+  font: 800 clamp(30px, 8vw, 42px) var(--body); font-variant-numeric: tabular-nums;
+  transition: transform .08s, background .15s, border-color .15s;
+}
+.ans kbd { position: absolute; top: 6px; left: 10px; font: 600 12px var(--body); color: var(--chalk-dim); }
+@media (hover: hover) { .ans:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: var(--chalk); } }
+.ans:active:not(:disabled), .ans.press { transform: scale(.95); }
+.ans.ok { background: var(--good); border-color: var(--good); color: var(--slate-deep); animation: pop .3s ease-out; }
+.ans.no { background: var(--bad); border-color: var(--bad); color: #2a0b0b; }
+.ans.reveal { border-color: var(--good); color: var(--good); }
+.ans:disabled { cursor: default; }
+.ans.dim { opacity: .4; }
+#hint { text-align: center; font-size: 12px; color: var(--chalk-dim); margin-top: -4px; }
+@media (hover: none) { #hint { display: none; } .ans kbd { display: none; } }
+
+/* Overlays */
+.overlay {
+  position: absolute; inset: 0; z-index: 5; border-radius: 4px; padding: 20px 16px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center;
+  background: rgba(22,48,42,.93); backdrop-filter: blur(3px); overflow-y: auto;
+}
+.overlay h1, .overlay h2 { font-family: var(--display); margin: 0; line-height: 1; text-wrap: balance; }
+.overlay h1 { font-size: clamp(48px, 13vw, 76px); }
+.overlay h1 em { font-style: normal; color: var(--gold); }
+.overlay h2 { font-size: clamp(36px, 10vw, 54px); }
+.overlay p { margin: 0; max-width: 34ch; color: var(--chalk-dim); font-size: 16px; line-height: 1.4; }
+.demo { font-family: var(--display); font-size: 30px; display: flex; gap: 8px; align-items: center; }
+.demo span { border: 2px solid rgba(242,239,228,.6); border-radius: 8px; padding: 0 10px; }
+.demo span.q { border-style: dashed; color: var(--gold); border-color: var(--gold); }
+.cta {
+  font: 800 22px var(--body); padding: 12px 34px; border-radius: 14px; cursor: pointer;
+  background: var(--chalk); color: var(--slate-deep); border: 0; box-shadow: 0 5px 0 var(--chalk-dim);
+  transition: transform .08s, box-shadow .08s;
+}
+.cta:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--chalk-dim); }
+.cta.ghost { background: transparent; color: var(--chalk); border: 2px solid rgba(242,239,228,.5); box-shadow: none; font-size: 17px; padding: 8px 22px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+.keys { font-size: 13px; color: var(--chalk-dim); }
+.keys kbd { border: 1px solid rgba(242,239,228,.4); border-radius: 5px; padding: 0 6px; font: 600 12px var(--body); color: var(--chalk); }
+label.name { font-size: 13px; color: var(--chalk-dim); display: flex; gap: 8px; align-items: center; }
+#nameIn {
+  width: 9ch; font: 700 18px var(--body); text-transform: uppercase; text-align: center; letter-spacing: .1em;
+  background: rgba(0,0,0,.2); color: var(--chalk); border: 2px solid rgba(242,239,228,.4); border-radius: 8px; padding: 2px 6px;
+  user-select: text; -webkit-user-select: text;
+}
+.final { font-family: var(--display); font-size: 64px; color: var(--gold); line-height: 1; }
+.newbest { color: var(--good); font-weight: 800; letter-spacing: .14em; text-transform: uppercase; font-size: 14px; animation: pulse .6s ease-in-out infinite alternate; }
+.table { width: 100%; max-width: 300px; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 16px; }
+.table caption { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--chalk-dim); padding-bottom: 6px; }
+.table td { padding: 3px 6px; border-bottom: 1px dashed rgba(242,239,228,.18); }
+.table td:first-child { color: var(--chalk-dim); width: 2.5em; }
+.table td:last-child { text-align: right; font-weight: 800; }
+.table tr.me td { color: var(--gold); }
+.table .empty td { color: var(--chalk-dim); text-align: center; font-weight: 500; }
+.small { font-size: 13px !important; }
+
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+#flash { position: fixed; inset: 0; pointer-events: none; z-index: 9; opacity: 0; }
+#flash.g { background: radial-gradient(circle, transparent 40%, rgba(95,224,138,.35)); animation: fl .35s ease-out; }
+#flash.r { background: radial-gradient(circle, transparent 30%, rgba(255,93,93,.45)); animation: fl .45s ease-out; }
+@keyframes fl { from { opacity: 1; } to { opacity: 0; } }
+
+@media (max-height: 560px) { #board { gap: 8px; padding: 10px; } .stat b { font-size: 24px; } }
+@media (prefers-reduced-motion: reduce) {
+  #board.shake, #eq.enter, .ans.ok, .blk.blank.ok, #combo.hot, .newbest { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div id="frame">
+  <main id="board" aria-label="Chalk Sprint math game">
+    <div id="hud">
+      <div class="stat"><small>Score</small><b id="score">0</b></div>
+      <div class="stat"><small>Streak</small><b id="combo">x1</b></div>
+      <div id="lives" aria-label="Lives"><span>♥</span><span>♥</span><span>♥</span></div>
+      <button class="iconbtn" id="muteBtn" aria-label="Toggle sound" title="Sound (M)">♪</button>
+      <button class="iconbtn" id="pauseBtn" aria-label="Pause" title="Pause (P)">II</button>
+    </div>
+    <div id="timer"><div id="timerFill"></div></div>
+    <div id="eqWrap">
+      <div id="level">Level 1</div>
+      <div id="eq" aria-live="polite">
+        <div class="blk" id="b0">5</div><div class="op" id="o1">+</div><div class="blk" id="b1">6</div><div class="op">=</div><div class="blk blank" id="b2">?</div>
+      </div>
+      <div id="float"></div>
+    </div>
+    <div id="answers">
+      <button class="ans" data-i="0"><kbd>1</kbd><span>11</span></button>
+      <button class="ans" data-i="1"><kbd>2</kbd><span>12</span></button>
+      <button class="ans" data-i="2"><kbd>3</kbd><span>10</span></button>
+      <button class="ans" data-i="3"><kbd>4</kbd><span>13</span></button>
+    </div>
+    <div id="hint">Keys 1–4 answer · P pause · R restart</div>
+
+    <section class="overlay" id="startScreen">
+      <h1>Chalk <em>Sprint</em></h1>
+      <div class="demo"><span>5</span>+<span>6</span>=<span class="q">?</span></div>
+      <p>Pick the right answer before the chalk line runs out. Chain correct answers to grow your streak multiplier. Three misses and the board is wiped.</p>
+      <button class="cta" id="startBtn">Play</button>
+      <label class="name" for="nameIn">Your name <input id="nameIn" maxlength="8" value="YOU" autocomplete="off" spellcheck="false"></label>
+      <div class="keys"><kbd>Enter</kbd> start · <kbd>1</kbd>–<kbd>4</kbd> answer · <kbd>P</kbd> pause · <kbd>M</kbd> sound</div>
+      <table class="table" id="tblStart"></table>
+    </section>
+
+    <section class="overlay" id="pauseScreen" hidden>
+      <h2>Paused</h2>
+      <p>The timer is frozen.</p>
+      <div class="row">
+        <button class="cta" id="resumeBtn">Resume</button>
+        <button class="cta ghost" id="restartBtn2">Restart</button>
+      </div>
+      <div class="keys"><kbd>P</kbd> resume · <kbd>R</kbd> restart</div>
+    </section>
+
+    <section class="overlay" id="overScreen" hidden>
+      <h2>Board wiped</h2>
+      <div class="final" id="finalScore">0</div>
+      <div class="newbest" id="newBest" hidden>New high score</div>
+      <p class="small" id="overStats"></p>
+      <div class="row">
+        <button class="cta" id="againBtn">Play again</button>
+        <button class="cta ghost" id="menuBtn">Menu</button>
+      </div>
+      <div class="keys"><kbd>Enter</kbd> or <kbd>R</kbd> play again</div>
+      <table class="table" id="tblOver"></table>
+    </section>
+  </main>
+</div>
+<div id="flash"></div>
+<canvas id="fx"></canvas>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const board = $('board'), eq = $('eq'), timerFill = $('timerFill');
+  const btns = [...document.querySelectorAll('.ans')];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  };
+
+  // ---------- Sound (WebAudio blips, started on first interaction) ----------
+  let actx = null, muted = store.get('cs-muted', false);
+  const muteBtn = $('muteBtn');
+  const syncMute = () => { muteBtn.style.opacity = muted ? .35 : 1; muteBtn.setAttribute('aria-pressed', String(!muted)); };
+  syncMute();
+  function audio() { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } if (actx && actx.state === 'suspended') actx.resume(); }
+  function tone(freq, dur = .1, type = 'triangle', vol = .18, slide = 0, delay = 0) {
+    if (muted || !actx) return;
+    const t = actx.currentTime + delay, o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + .02);
+  }
+  const sfx = {
+    good(streak) { const b = 520 * Math.pow(1.06, Math.min(streak, 12)); tone(b, .09); tone(b * 1.5, .14, 'triangle', .14, 0, .06); },
+    bad() { tone(180, .28, 'sawtooth', .12, -90); tone(120, .3, 'square', .06, -40, .04); },
+    tick() { tone(900, .03, 'square', .04); },
+    start() { [392, 523, 659].forEach((f, i) => tone(f, .12, 'triangle', .15, 0, i * .07)); },
+    over() { [392, 330, 262, 196].forEach((f, i) => tone(f, .2, 'triangle', .15, 0, i * .12)); },
+    level() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .1, 'square', .07, 0, i * .05)); }
+  };
+
+  // ---------- Particles (chalk dust on a canvas overlay) ----------
+  const cv = $('fx'), cx = cv.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  function resize() { dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  addEventListener('resize', resize); resize();
+  const parts = [];
+  function burst(x, y, color, n, power = 1) {
+    if (reduced) n = Math.min(n, 8);
+    for (let i = 0; i < n && parts.length < 400; i++) {
+      const a = Math.random() * Math.PI * 2, s = (2 + Math.random() * 6) * power;
+      parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 2.5, life: 1, decay: .012 + Math.random() * .022,
+        r: 2 + Math.random() * 4, c: color, rot: Math.random() * 6, spin: (Math.random() - .5) * .3, sq: Math.random() < .5 });
+    }
+  }
+  function stepParticles(dt) {
+    cx.clearRect(0, 0, W, H);
+    const k = dt / 16.67;
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.vy += .22 * k; p.vx *= Math.pow(.985, k); p.x += p.vx * k; p.y += p.vy * k; p.life -= p.decay * k; p.rot += p.spin * k;
+      if (p.life <= 0 || p.y > H + 20) { parts[i] = parts[parts.length - 1]; parts.pop(); continue; }
+      cx.globalAlpha = Math.max(0, p.life); cx.fillStyle = p.c;
+      if (p.sq) { cx.save(); cx.translate(p.x, p.y); cx.rotate(p.rot); cx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * .6); cx.restore(); }
+      else { cx.beginPath(); cx.arc(p.x, p.y, p.r * .5, 0, 6.283); cx.fill(); }
+    }
+    cx.globalAlpha = 1;
+  }
+  const centerOf = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+
+  function shake() { if (reduced) return; board.classList.remove('shake'); void board.offsetWidth; board.classList.add('shake'); }
+  function flash(cls) { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = cls; }
+  function floatText(txt, bad, el) {
+    const f = $('float'), wrap = $('eqWrap').getBoundingClientRect(), r = el.getBoundingClientRect();
+    f.textContent = txt; f.className = bad ? 'bad' : '';
+    f.style.left = (r.left - wrap.left + r.width / 2 - 30) + 'px'; f.style.top = (r.top - wrap.top - 20) + 'px';
+    void f.offsetWidth; f.classList.add('go');
+  }
+
+  // ---------- Question generation ----------
+  const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  function makeQuestion(level) {
+    let a, b, op, c;
+    const ops = level < 1 ? ['+'] : level < 2 ? ['+', '+', '−'] : level < 3 ? ['+', '−', '×'] : ['+', '−', '×', '×', '÷'];
+    op = pick(ops);
+    const big = level < 1 ? 9 : level < 3 ? 12 + level * 6 : Math.min(99, 20 + level * 10);
+    if (op === '+') { a = rnd(1, big); b = rnd(1, big); c = a + b; }
+    else if (op === '−') { a = rnd(2, big + 5); b = rnd(1, a); c = a - b; }
+    else if (op === '×') { const m = level < 3 ? 5 : Math.min(12, 6 + level); a = rnd(2, m); b = rnd(2, m); c = a * b; }
+    else { b = rnd(2, Math.min(12, 4 + level)); c = rnd(2, Math.min(12, 4 + level)); a = b * c; }
+    // From level 3 the missing block can be an operand too
+    let hide = 2;
+    if (level >= 3 && Math.random() < .3) hide = Math.random() < .5 ? 0 : 1;
+    const vals = [a, b, c], answer = vals[hide];
+    const opts = new Set([answer]);
+    const offs = [1, -1, 2, -2, 10, -10, 3, -3, 5, -5];
+    if (op === '×' || op === '÷') offs.unshift(a, -a, b, -b);
+    let guard = 0;
+    while (opts.size < 4 && guard++ < 60) {
+      const o = guard < 40 ? answer + pick(offs) : answer + rnd(-15, 15);
+      if (o >= 0 && o !== answer) opts.add(o);
+    }
+    const list = [...opts].sort(() => Math.random() - .5);
+    return { vals, op, hide, answer, options: list };
+  }
+
+  // ---------- State ----------
+  const S = { mode: 'menu', score: 0, streak: 0, best: 0, lives: 3, correct: 0, level: 0, q: null, tLeft: 0, tMax: 1, locked: false, lastTick: 0, asked: 0 };
+  const timeFor = lvl => Math.max(2.6, 7 - lvl * .55);
+  const mult = () => Math.min(5, 1 + Math.floor(S.streak / 3));
+
+  function renderHUD() {
+    $('score').textContent = S.score;
+    const m = mult(); $('combo').textContent = 'x' + m; $('combo').classList.toggle('hot', m >= 3);
+    [...$('lives').children].forEach((s, i) => s.classList.toggle('lost', i >= S.lives));
+    $('level').textContent = 'Level ' + (S.level + 1);
+  }
+  function showQuestion() {
+    const q = S.q = makeQuestion(S.level);
+    S.asked++;
+    for (let i = 0; i < 3; i++) {
+      const el = $('b' + i);
+      el.className = 'blk' + (i === q.hide ? ' blank' : '');
+      el.textContent = i === q.hide ? '?' : q.vals[i];
+    }
+    $('o1').textContent = q.op;
+    btns.forEach((b, i) => { b.className = 'ans'; b.disabled = false; b.querySelector('span').textContent = q.options[i]; });
+    eq.classList.remove('enter'); void eq.offsetWidth; eq.classList.add('enter');
+    S.tMax = S.tLeft = timeFor(S.level); S.locked = false;
+  }
+
+  function answer(i) {
+    if (S.mode !== 'play' || S.locked) return;
+    S.locked = true;
+    const q = S.q, btn = btns[i], val = +btn.querySelector('span').textContent, blank = $('b' + q.hide);
+    const ok = val === q.answer;
+    btns.forEach(b => b.disabled = true);
+    blank.textContent = q.answer;
+    if (ok) {
+      S.streak++; S.correct++;
+      const speed = Math.round((S.tLeft / S.tMax) * 10), gained = (10 + speed) * mult();
+      S.score += gained; S.best = Math.max(S.best, S.streak);
+      btn.classList.add('ok'); blank.classList.add('ok');
+      btns.forEach(b => b !== btn && b.classList.add('dim'));
+      const [x, y] = centerOf(btn); burst(x, y, '#5fe08a', 26); burst(x, y, '#f2efe4', 14, .8);
+      const [bx, by] = centerOf(blank); burst(bx, by, '#ffd166', 12 + mult() * 4, .7);
+      floatText('+' + gained, false, blank); flash('g'); sfx.good(S.streak);
+      $('score').classList.remove('bump'); void $('score').offsetWidth; $('score').classList.add('bump');
+      const newLevel = Math.floor(S.correct / 5);
+      if (newLevel > S.level) { S.level = newLevel; setTimeout(sfx.level, 120); }
+      renderHUD();
+      setTimeout(next, 420);
+    } else miss(btn);
+  }
+  function miss(btn) {
+    const q = S.q, blank = $('b' + q.hide);
+    S.locked = true; S.streak = 0; S.lives--;
+    btns.forEach(b => { b.disabled = true; if (+b.querySelector('span').textContent === q.answer) b.classList.add('reveal'); else if (b !== btn) b.classList.add('dim'); });
+    blank.textContent = q.answer; blank.classList.add('no');
+    if (btn) { btn.classList.add('no'); const [x, y] = centerOf(btn); burst(x, y, '#ff5d5d', 30, 1.1); }
+    floatText(btn ? '✗' : 'Time!', true, blank);
+    shake(); flash('r'); sfx.bad(); if (navigator.vibrate) try { navigator.vibrate(60); } catch {}
+    renderHUD();
+    setTimeout(S.lives <= 0 ? gameOver : next, 850);
+  }
+  function next() { if (S.mode === 'play') showQuestion(); }
+
+  // ---------- Modes ----------
+  const screens = { menu: $('startScreen'), pause: $('pauseScreen'), over: $('overScreen') };
+  function show(name) { Object.entries(screens).forEach(([k, el]) => el.hidden = k !== name); }
+  function start() {
+    audio(); saveName();
+    Object.assign(S, { mode: 'play', score: 0, streak: 0, best: 0, lives: 3, correct: 0, level: 0, asked: 0 });
+    show(null); renderHUD(); showQuestion(); sfx.start();
+    btns[0].focus({ preventScroll: true }); btns[0].blur();
+  }
+  function pause() { if (S.mode !== 'play') return; S.mode = 'pause'; show('pause'); $('resumeBtn').focus(); }
+  function resume() { if (S.mode !== 'pause') return; S.mode = 'play'; show(null); audio(); }
+  function gameOver() {
+    S.mode = 'over';
+    const name = getName(), list = store.get('cs-scores', []);
+    const prevTop = list.length ? list[0].s : 0;
+    const entry = { n: name, s: S.score, d: Date.now() };
+    list.push(entry); list.sort((a, b) => b.s - a.s); list.length = Math.min(list.length, 10);
+    store.set('cs-scores', list);
+    $('finalScore').textContent = S.score;
+    $('newBest').hidden = !(S.score > 0 && S.score > prevTop);
+    $('overStats').textContent = `${S.correct} correct of ${S.asked} · best streak ${S.best} · reached level ${S.level + 1}`;
+    renderTable($('tblOver'), list, entry);
+    show('over'); sfx.over();
+    if (S.score > prevTop && S.score > 0) { const [x, y] = centerOf($('finalScore')); burst(x, y, '#ffd166', 60, 1.3); burst(x, y, '#5fe08a', 30, 1); }
+    $('againBtn').focus();
+  }
+  function menu() { S.mode = 'menu'; renderTable($('tblStart'), store.get('cs-scores', [])); show('menu'); $('startBtn').focus(); }
+  function renderTable(tbl, list, me) {
+    const rows = list.map((e, i) => `<tr class="${e === me ? 'me' : ''}"><td>${i + 1}.</td><td>${esc(e.n)}</td><td>${e.s}</td></tr>`).join('');
+    tbl.innerHTML = '<caption>High scores on this device</caption>' + (rows || '<tr class="empty"><td colspan="3">No scores yet. Set the first one.</td></tr>');
+  }
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function getName() { return ($('nameIn').value.trim().toUpperCase() || 'YOU').slice(0, 8); }
+  function saveName() { store.set('cs-name', getName()); }
+  $('nameIn').value = store.get('cs-name', 'YOU');
+
+  // ---------- Input ----------
+  btns.forEach((b, i) => b.addEventListener('pointerdown', e => { if (e.button > 0) return; e.preventDefault(); answer(i); }));
+  btns.forEach((b, i) => b.addEventListener('click', e => { if (e.detail === 0) answer(i); })); // keyboard activation via Enter/Space on focused button
+  $('startBtn').onclick = start; $('againBtn').onclick = start; $('restartBtn2').onclick = start;
+  $('resumeBtn').onclick = resume; $('menuBtn').onclick = menu;
+  $('pauseBtn').onclick = () => S.mode === 'play' ? pause() : resume();
+  muteBtn.onclick = () => { muted = !muted; store.set('cs-muted', muted); syncMute(); audio(); };
+  addEventListener('keydown', e => {
+    if (e.target === $('nameIn')) { if (e.key === 'Enter') { e.preventDefault(); start(); } return; }
+    const k = e.key.toLowerCase();
+    if (S.mode === 'play' && k >= '1' && k <= '4') { const b = btns[+k - 1]; b.classList.add('press'); setTimeout(() => b.classList.remove('press'), 90); answer(+k - 1); e.preventDefault(); return; }
+    if (k === 'p' || k === 'escape') { S.mode === 'play' ? pause() : S.mode === 'pause' && resume(); e.preventDefault(); return; }
+    if (k === 'm') { muteBtn.click(); return; }
+    if (k === 'r' && S.mode !== 'menu') { start(); return; }
+    if ((k === 'enter' || k === ' ') && (S.mode === 'menu' || S.mode === 'over') && !(document.activeElement instanceof HTMLButtonElement)) { start(); e.preventDefault(); }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+
+  // ---------- Main loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(50, now - last); last = now;
+    if (S.mode === 'play' && !S.locked) {
+      S.tLeft -= dt / 1000;
+      const f = Math.max(0, S.tLeft / S.tMax);
+      timerFill.style.transform = `scaleX(${f})`;
+      timerFill.classList.toggle('low', f < .3);
+      if (f < .3 && now - S.lastTick > 330) { S.lastTick = now; sfx.tick(); }
+      if (S.tLeft <= 0) miss(null);
+    }
+    if (parts.length) stepParticles(dt); else if (cv._dirty) { cx.clearRect(0, 0, W, H); }
+    cv._dirty = parts.length > 0;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  menu();
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
